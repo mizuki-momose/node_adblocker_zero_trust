@@ -136,7 +136,7 @@ async function putGatewayRules(ids) {
 
   const traffic =
     ids.length > 0
-      ? ids.map((id) => `dns.fqdn in $${id}`).join(" or ")
+      ? ids.map((id) => `any(dns.domains[*] in $${id})`).join(" or ")
       : 'dns.fqdn == "example.com"';
 
   try {
