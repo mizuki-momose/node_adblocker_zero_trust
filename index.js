@@ -43,7 +43,15 @@ async function getAdblockURLList() {
   const text = await response.text();
   return text
     .split("\n")
-    .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"));
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .filter((line) => {
+      const isIPAddress = /^\d{1,3}(\.\d{1,3}){3}$/.test(line);
+      if (isIPAddress) {
+        console.log(`Excluded IP address: ${line}`);
+      }
+      return !isIPAddress;
+    });
 }
 
 async function getGatewayRules() {
@@ -61,6 +69,71 @@ async function getGatewayRules() {
   }
 }
 
+async function getAdblockList() {
+  if (!API_TOKEN) throw new Error(`Error: API_TOKEN is not set`);
+  if (!ACCOUNT_ID) throw new Error(`Error: ACCOUNT_ID is not set`);
+
+  try {
+    await verifyToken();
+    const listsData = await fetchWithAuth(
+      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists`
+    );
+    return listsData.result.filter((list) =>
+      list.name.startsWith("AutoCreated_AdBlockList_")
+    );
+  } catch (error) {
+    console.error("Error:", error);
+  }
+}
+
+async function deleteAdblockList() {
+  if (!API_TOKEN) throw new Error(`Error: API_TOKEN is not set`);
+  if (!ACCOUNT_ID) throw new Error(`Error: ACCOUNT_ID is not set`);
+
+  try {
+    await verifyToken();
+    const adblockLists = await getAdblockList();
+    const deletePromises = adblockLists.map((list) =>
+      fetchWithAuth(
+        `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists/${list.id}`,
+        {
+          method: "DELETE",
+        }
+      )
+    );
+
+    await Promise.all(deletePromises);
+    console.log(`Deleted ${adblockLists.length} adblock lists`);
+  } catch (error) {
+    console.error("Error:", error);
+  }
+}
+
+async function postAdblockList(name, urls) {
+  if (!API_TOKEN) throw new Error(`Error: API_TOKEN is not set`);
+  if (!ACCOUNT_ID) throw new Error(`Error: ACCOUNT_ID is not set`);
+
+  try {
+    await verifyToken();
+    const listData = {
+      name,
+      description: "Auto created adblock list",
+      type: "DOMAIN",
+      items: urls.map((url) => ({ value: url })),
+    };
+
+    return await fetchWithAuth(
+      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/gateway/lists`,
+      {
+        method: "POST",
+        body: JSON.stringify(listData),
+      }
+    );
+  } catch (error) {
+    console.error("Error:", error);
+  }
+}
+
 async function putGatewayRules() {
   if (!API_TOKEN) throw new Error(`Error: API_TOKEN is not set`);
   if (!ACCOUNT_ID) throw new Error(`Error: ACCOUNT_ID is not set`);
@@ -70,21 +143,27 @@ async function putGatewayRules() {
     await verifyToken();
     const adblockURLList = await getAdblockURLList();
 
-    const chunkSize = 200;
+    const chunkSize = 1000;
     const chunks = [];
     for (let i = 0; i < adblockURLList.length; i += chunkSize) {
       chunks.push(adblockURLList.slice(i, i + chunkSize));
     }
 
-    const trafficConditions = chunks
-      .map((chunk) => `dns.fqdn matches "(${chunk.join("|")})"`)
-      .join(" or ");
+    await deleteAdblockList();
+    const listName = `AutoCreated_AdBlockList_${new Date().toLocaleString()}_`;
+    const results = await Promise.all(
+      chunks.map(async (chunk, index) =>
+        postAdblockList(listName + index.toString(), chunk)
+      )
+    );
 
     const ruleData = {
       action: "block",
       name: "AdBlock",
       enabled: true,
-      traffic: trafficConditions,
+      traffic: results
+        .map(({ result }) => `dns.fqdn in $${result.id}`)
+        .join(" or "),
     };
 
     const rulesData = await fetchWithAuth(
