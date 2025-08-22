@@ -1,8 +1,14 @@
 const API_TOKEN = process.env.API_TOKEN;
 const ACCOUNT_ID = process.env.ACCOUNT_ID;
 const RULE_ID = process.env.RULE_ID;
-const YEAR = process.env.YEAR;
-const MONTH = process.env.MONTH;
+let YEAR = process.env.YEAR;
+let MONTH = process.env.MONTH;
+
+if (!YEAR || !MONTH) {
+  const now = new Date();
+  YEAR = YEAR || now.getFullYear().toString();
+  MONTH = MONTH || (now.getMonth() + 1).toString();
+}
 
 async function fetchWithAuth(url, options = {}) {
   const response = await fetch(url, {
@@ -46,9 +52,6 @@ async function getGatewayRules() {
 }
 
 async function getAdblockURLList() {
-  if (!YEAR) throw new Error(`Error: YEAR is not set`);
-  if (!MONTH) throw new Error(`Error: MONTH is not set`);
-
   const url = `https://280blocker.net/files/280blocker_domain_${YEAR}${(
     "0" + MONTH
   ).slice(-2)}.txt`;
